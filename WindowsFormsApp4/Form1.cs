@@ -1,177 +1,235 @@
-﻿using System;
-using System.Drawing;
-using System.Linq;
-using System.Windows.Forms;
-using Emgu.CV;
+﻿using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
+using Emgu.CV.Util;
+using System;
+using System.Drawing;
+using System.IO.Ports;
+using System.Windows.Forms;
 
-namespace WindowsFormsApp4
+namespace YellowLineTracker
 {
     public partial class Form1 : Form
     {
         private VideoCapture _capture;
-        private Timer _frameTimer;
+        private bool _isRunning = false;
+        private SerialPort _serialPort;
 
         public Form1()
         {
-            Console.WriteLine("Form1 Constructor Called");  // Debugging message
             InitializeComponent();
+            _serialPort = new SerialPort("COM9", 9600);
+            try { _serialPort.Open(); }
+            catch (Exception ex) { MessageBox.Show("Serial Port Error: " + ex.Message); }
+        }
 
-            // Ensure TrackBars are not null before assigning event handlers
-            if (laneThresholdBar != null) laneThresholdBar.Scroll += FilterUpdated;
-            if (redThresholdBar != null) redThresholdBar.Scroll += FilterUpdated;
-            if (edgeThresholdBar != null) edgeThresholdBar.Scroll += FilterUpdated;
-            if (blurKernelBar != null) blurKernelBar.Scroll += FilterUpdated;
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            labelStatus.Text = "Ready";
+        }
 
-            Console.WriteLine("Event Handlers Attached");
-
+        private void StartCapture()
+        {
             _capture = new VideoCapture(0);
-            Console.WriteLine("Video Capture Initialized");
-
-            _frameTimer = new Timer { Interval = 100 };
-            _frameTimer.Tick += FrameTimer_Tick;
-            _frameTimer.Start();
-            Console.WriteLine("Frame Timer Started");
-
-            // Ensure form appears
-            this.WindowState = FormWindowState.Normal;
-            this.Show();
+            _capture.ImageGrabbed += ProcessFrame;
+            _isRunning = true;
+            _capture.Start();
         }
 
-        private void FrameTimer_Tick(object sender, EventArgs e)
+        private void StopCapture()
         {
-            Mat frame = _capture.QueryFrame();
-            if (frame != null && !frame.IsEmpty)
+            _isRunning = false;
+            if (_capture != null)
             {
-                CvInvoke.Flip(frame, frame, FlipType.Horizontal);
-                DisplayImage(frame, pictureBoxRaw);
-                ProcessFilters(frame);
+                _capture.ImageGrabbed -= ProcessFrame;
+                _capture.Dispose();
             }
         }
 
-        private void DisplayImage(Mat image, PictureBox pictureBox)
+        private void ProcessFrame(object sender, EventArgs e)
         {
-            Image<Bgr, Byte> resizedImage = image.ToImage<Bgr, Byte>()
-                .Resize(pictureBox.Width, pictureBox.Height, Inter.Linear);
+            if (!_isRunning || _capture == null) return;
 
-            pictureBox.Image?.Dispose();
-            pictureBox.Image = resizedImage.ToBitmap();
-        }
+            Mat frame = new Mat();
+            _capture.Retrieve(frame);
+            var image = frame.ToImage<Bgr, byte>();
 
-        private void ProcessFilters(Mat frame)
-        {
-            Image<Gray, Byte> laneLines = DetectLaneLines(frame);
-            Image<Gray, Byte> redLine = DetectRedLine(frame);
-            Image<Gray, Byte> edges = DetectEdges(frame);
-            Image<Bgr, Byte> blurred = ApplyBlur(frame);
 
-            pictureBoxLaneLines.Image?.Dispose();
-            pictureBoxLaneLines.Image = laneLines.ToBitmap();
 
-            pictureBoxRedLine.Image?.Dispose();
-            pictureBoxRedLine.Image = redLine.ToBitmap();
 
-            pictureBoxEdges.Image?.Dispose();
-            pictureBoxEdges.Image = edges.ToBitmap();
 
-            pictureBoxBlurred.Image?.Dispose();
-            pictureBoxBlurred.Image = blurred.ToBitmap();
 
-            AnalyzeLanePosition(laneLines, redLine);
-        }
 
-        private Image<Gray, Byte> DetectLaneLines(Mat frame)
-        {
-            laneThresholdLabel.Text = $"Lane Threshold: {laneThresholdBar.Value}";
-            return frame.ToImage<Bgr, Byte>().Convert<Hsv, Byte>()
-                        .InRange(new Hsv(0, 0, laneThresholdBar.Value), new Hsv(180, 50, 255));
-        }
 
-        private Image<Gray, Byte> DetectRedLine(Mat frame)
-        {
-            redThresholdLabel.Text = $"Red Threshold: {redThresholdBar.Value}";
-            return frame.ToImage<Bgr, Byte>().Convert<Hsv, Byte>()
-                        .InRange(new Hsv(0, redThresholdBar.Value, 100), new Hsv(10, 255, 255));
-        }
 
-        private Image<Gray, Byte> DetectEdges(Mat frame)
-        {
-            edgeThresholdLabel.Text = $"Edge Threshold: {edgeThresholdBar.Value}";
-            Mat edges = new Mat();
-            CvInvoke.Canny(frame, edges, edgeThresholdBar.Value, edgeThresholdBar.Value * 2);
-            return edges.ToImage<Gray, Byte>();
-        }
 
-        private Image<Bgr, Byte> ApplyBlur(Mat frame)
-        {
-            blurKernelLabel.Text = $"Blur Kernel: {blurKernelBar.Value}";
-            Mat blurred = new Mat();
-            CvInvoke.GaussianBlur(frame, blurred, new Size(blurKernelBar.Value, blurKernelBar.Value), 0);
-            return blurred.ToImage<Bgr, Byte>();
-        }
 
-        private void AnalyzeLanePosition(Image<Gray, Byte> laneImage, Image<Gray, Byte> redLineImage)
-        {
-            int width = laneImage.Width;
-            int sliceWidth = width / 5;
-            int[] whiteCounts = new int[5];
 
-            for (int i = 0; i < 5; i++)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            var hsv = image.Convert<Hsv, byte>();
+
+            // Improved yellow detection range
+            var yellowMask = hsv.InRange(new Hsv(15, 70, 70), new Hsv(40, 255, 255));
+
+            // Draw contours around yellow regions
+            var contours = new VectorOfVectorOfPoint();
+            CvInvoke.FindContours(yellowMask.Clone(), contours, null, RetrType.External, ChainApproxMethod.ChainApproxSimple);
+            for (int i = 0; i < contours.Size; i++)
             {
-                Rectangle sliceRect = new Rectangle(i * sliceWidth, 0, sliceWidth, laneImage.Height);
-                Image<Gray, Byte> slice = laneImage.GetSubRect(sliceRect);
-
-                whiteCounts[i] = CvInvoke.CountNonZero(slice);
+                CvInvoke.DrawContours(image, contours, i, new MCvScalar(0, 255, 255), 2);
             }
 
-            DetermineDirection(whiteCounts, redLineImage);
-        }
+            // White and red detection
+            var whiteMask = hsv.InRange(new Hsv(0, 0, 200), new Hsv(180, 30, 255));
+            var redMask = hsv.InRange(new Hsv(0, 100, 100), new Hsv(10, 255, 255))
+                            .Or(hsv.InRange(new Hsv(160, 100, 100), new Hsv(180, 255, 255)));
 
-        private void DetermineDirection(int[] whiteCounts, Image<Gray, Byte> redLineImage)
-        {
-            if (CvInvoke.CountNonZero(redLineImage) > 500)
-            {
-                UpdateDirectionLabel("STOP");
-                return;
-            }
+            Rectangle redZone = new Rectangle(0, redMask.Height - 60, redMask.Width, 40);
+            var redBottom = redMask.GetSubRect(redZone);
 
-            int maxIndex = Array.IndexOf(whiteCounts, whiteCounts.Max());
+            var moments = yellowMask.GetMoments(true);
+            int centerX = (int)(moments.M10 / (moments.M00 + 1e-5));
+            int width = yellowMask.Width;
+
+            var leftBoundary = whiteMask.GetSubRect(new Rectangle(0, whiteMask.Height / 2, whiteMask.Width / 5, whiteMask.Height / 2));
+            var rightBoundary = whiteMask.GetSubRect(new Rectangle(whiteMask.Width * 4 / 5, whiteMask.Height / 2, whiteMask.Width / 5, whiteMask.Height / 2));
+            int whiteLeft = CvInvoke.CountNonZero(leftBoundary);
+            int whiteRight = CvInvoke.CountNonZero(rightBoundary);
 
             string direction;
-            switch (maxIndex)
+
+            // === CONTROL DECISION ===
+            if (CvInvoke.CountNonZero(redBottom) > 500)
             {
-                case 0:
-                    direction = "Sharp Left";
-                    break;
-                case 1:
-                    direction = "Mild Left";
-                    break;
-                case 2:
-                    direction = "Straight";
-                    break;
-                case 3:
-                    direction = "Mild Right";
-                    break;
-                case 4:
-                    direction = "Sharp Right";
-                    break;
-                default:
-                    direction = "Unknown";
-                    break;
+                direction = "STOP - RED LINE";
+                SendCommand('x');
+            }
+            else if (moments.M00 < 1e-5)
+            {
+                direction = "YELLOW NOT FOUND - STOP";
+                SendCommand('x');
+            }
+            else
+            {
+                // White boundary recovery
+                if (whiteLeft < 200 && centerX > width / 2)
+                {
+                    direction = "OUT LEFT - TURN RIGHT TO RETURN";
+                    SendCommand('R');
+                }
+                else if (whiteRight < 200 && centerX < width / 2)
+                {
+                    direction = "OUT RIGHT - TURN LEFT TO RETURN";
+                    SendCommand('L');
+                }
+                else
+                {
+                    // Yellow line based motion
+                    if (centerX < width / 5)
+                    {
+                        direction = "SHARP LEFT";
+                        SendCommand('A');
+                    }
+                    else if (centerX < 2 * width / 5)
+                    {
+                        direction = "LEFT";
+                        SendCommand('L');
+                    }
+                    else if (centerX < 3 * width / 5)
+                    {
+                        direction = "STRAIGHT";
+                        SendCommand('s');
+                    }
+                    else if (centerX < 4 * width / 5)
+                    {
+                        direction = "RIGHT";
+                        SendCommand('r');
+                    }
+                    else
+                    {
+                        direction = "SHARP RIGHT";
+                        SendCommand('R');
+                    }
+                }
             }
 
-            UpdateDirectionLabel(direction);
+            // Overlay direction
+            CvInvoke.PutText(image, direction, new Point(20, 40), FontFace.HersheySimplex, 1.0, new MCvScalar(0, 255, 0), 2);
+
+            UpdateUI(image, yellowMask, whiteMask, redMask, direction);
         }
 
-        private void UpdateDirectionLabel(string direction)
+        private void UpdateUI(Image<Bgr, byte> img, Image<Gray, byte> yellow, Image<Gray, byte> white, Image<Gray, byte> red, string status)
         {
-            this.Invoke(new Action(() =>
+            if (InvokeRequired)
             {
-                directionLabel.Text = $"Direction: {direction}";
-            }));
+                Invoke((MethodInvoker)(() =>
+                {
+                    pictureBoxCamera.Image = img.ToBitmap();
+                    pictureBoxYellow.Image = yellow.ToBitmap();
+                    pictureBoxWhite.Image = white.ToBitmap();
+                    pictureBoxRed.Image = red.ToBitmap();
+                    labelStatus.Text = status;
+                }));
+            }
+            else
+            {
+                pictureBoxCamera.Image = img.ToBitmap();
+                pictureBoxYellow.Image = yellow.ToBitmap();
+                pictureBoxWhite.Image = white.ToBitmap();
+                pictureBoxRed.Image = red.ToBitmap();
+                labelStatus.Text = status;
+            }
         }
 
-        private void FilterUpdated(object sender, EventArgs e) => ProcessFilters(_capture.QueryFrame());
+        private void SendCommand(char c)
+        {
+            if (_serialPort.IsOpen)
+            {
+                try { _serialPort.Write(c.ToString()); }
+                catch { }
+            }
+        }
+
+        private void buttonStart_Click(object sender, EventArgs e) => StartCapture();
+        private void buttonStop_Click(object sender, EventArgs e) => StopCapture();
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            StopCapture();
+            if (_serialPort.IsOpen) _serialPort.Close();
+            base.OnFormClosing(e);
+        }
     }
 }
